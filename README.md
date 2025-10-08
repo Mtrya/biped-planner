@@ -68,3 +68,10 @@ biped-planner/
 └── configs/
     └── config.yaml         # Configuration file
 ```
+
+## 进度
+
+- [x] **地形处理** (`src/terrain.py`): 实现1000x3000高度图加载和双线性插值，`get_height(x,y)`查询坐标高度，`get_gradient(x,y)`计算地形梯度，用于足平面约束检查
+- [] **环境实现** (`src/environment.py`)
+- [] **模型设计** (`src/planner.py`)
+- [] **可视化与分析** (`src/visualize.py`)
