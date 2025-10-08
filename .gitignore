@@ -13,6 +13,8 @@ wheels/
 .claude
 .qwen
 .iflow
+*.md
+!README.md
 
 # References
 reference*
