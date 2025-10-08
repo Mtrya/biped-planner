@@ -75,6 +75,6 @@ biped-planner/
 ## 进度
 
 - [x] **地形处理** (`src/terrain.py`): 实现3000x1000高度图加载和双线性插值，`get_height(x,y)`查询坐标高度，`get_terrain()`返回地形类
-- [] **环境实现** (`src/environment.py`)
+- [x] **环境实现** (`src/environment.py`)：连续状态动作，限制检查（奖励函数还比较粗糙），可视化。
 - [] **模型设计** (`src/planner.py`)
 - [] **可视化与分析** (`src/visualize.py`)
