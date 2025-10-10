@@ -78,8 +78,8 @@ class BipedEnvironment(gymnasium.Env):
         self.position = np.array([0.0, 0.0])  # (x, y)
         self.orientation = 0.0  # theta
         self.foot_side = 0  # 0=left, 1=right
-        self.start_pos = np.array([0.0, 500.0])  # Default start (x=0, y=500)
-        self.goal_pos = np.array([3000.0, 500.0])  # Default goal (x=3000, y=500)
+        self.start_pos = np.array([0.0, 500.0])  # Initial values, will be randomized in reset()
+        self.goal_pos = np.array([3000.0, 500.0])  # Initial values, will be randomized in reset()
         self.trajectory = []  # Store footstep history
 
         # Rendering
@@ -92,9 +92,16 @@ class BipedEnvironment(gymnasium.Env):
         """Reset environment to initial state."""
         super().reset(seed=seed)
 
-        if options:
-            self.start_pos = np.array(options.get('start_pos', self.start_pos))
-            self.goal_pos = np.array(options.get('goal_pos', self.goal_pos))
+        # Randomly sample start and goal positions
+        if options and 'start_pos' in options and 'goal_pos' in options:
+            self.start_pos = np.array(options['start_pos'], dtype=np.float64)
+            self.goal_pos = np.array(options['goal_pos'], dtype=np.float64)
+        else:
+            # Random sampling: start at x=0, goal at x=3000, y can be 0-1000
+            start_y = np.random.uniform(0, 1000)
+            goal_y = np.random.uniform(0, 1000)
+            self.start_pos = np.array([0.0, start_y], dtype=np.float64)
+            self.goal_pos = np.array([3000.0, goal_y], dtype=np.float64)
 
         # Reset state to start position
         self.position = self.start_pos.copy()
@@ -116,7 +123,7 @@ class BipedEnvironment(gymnasium.Env):
         if not self._validate_step(dx, dy, dtheta):
             # Invalid step - penalty and no movement
             reward = -10.0
-            terminated = False
+            terminated = True
             truncated = False
             info = {'reason': 'constraint_violation', 'constraint_details': self._get_constraint_details(dx, dy, dtheta)}
             return self._get_observation(), reward, terminated, truncated, info
@@ -129,7 +136,7 @@ class BipedEnvironment(gymnasium.Env):
 
         # Check if reached goal
         distance_to_goal = np.linalg.norm(self.position - self.goal_pos)
-        reached_goal = distance_to_goal < 2.0
+        reached_goal = distance_to_goal < 3.0
 
         # Calculate reward
         if reached_goal:
@@ -254,28 +261,38 @@ class BipedEnvironment(gymnasium.Env):
         return terrain_normalized, start_normalized, goal_normalized, foot_normalized
 
     def _get_terrain_patch(self) -> np.ndarray:
-        """Extract 200x200 terrain patch around current position."""
+        """Extract 200x200 terrain patch around current position using vectorized operations."""
         x, y = self.position
         half_range = self.obs_range // 2
 
         # Calculate patch boundaries
         x_start = int(x - half_range)
         y_start = int(y - half_range)
+        x_end = x_start + self.obs_range
+        y_end = y_start + self.obs_range
 
-        # Extract patch with boundary handling
-        patch = np.zeros((self.obs_range, self.obs_range))
+        # Initialize patch with out-of-bounds value
+        patch = np.full((self.obs_range, self.obs_range), self.height_min, dtype=np.float32)
 
-        for i in range(self.obs_range):
-            for j in range(self.obs_range):
-                global_x = x_start + i
-                global_y = y_start + j
+        # Calculate valid intersection with terrain boundaries
+        valid_x_start = max(0, x_start)
+        valid_y_start = max(0, y_start)
+        valid_x_end = min(self.terrain_height, x_end)
+        valid_y_end = min(self.terrain_width, y_end)
 
-                # Check boundaries
-                if (0 <= global_x < self.terrain_height and
-                    0 <= global_y < self.terrain_width):
-                    patch[i, j] = self.terrain.get_height(float(global_x), float(global_y))
-                else:
-                    patch[i, j] = self.height_min  # Min height for out-of-bounds
+        # Calculate patch coordinates for valid region
+        patch_x_start = valid_x_start - x_start
+        patch_y_start = valid_y_start - y_start
+        patch_x_end = patch_x_start + (valid_x_end - valid_x_start)
+        patch_y_end = patch_y_start + (valid_y_end - valid_y_start)
+
+        # Extract valid region using NumPy slicing
+        if valid_x_end > valid_x_start and valid_y_end > valid_y_start:
+            # Get the terrain slice directly from height_map (no interpolation for speed)
+            terrain_slice = self.terrain.height_map[valid_x_start:valid_x_end, valid_y_start:valid_y_end]
+            
+            # Place slice in patch
+            patch[patch_x_start:patch_x_end, patch_y_start:patch_y_end] = terrain_slice
 
         return patch
 

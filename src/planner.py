@@ -37,27 +37,26 @@ class CustomCnnExtractor(BaseFeaturesExtractor):
         
         # Calculate CNN output dimensions
         # Input: (1, 200, 200)
-        # After conv1: (8, 98, 98)  # 200 - 3 + 1 = 198, then /2 = 99
-        # After conv2: (16, 47, 47)   # 99 - 3 + 1 = 97, then /2 = 48
-        # After conv3: (32, 22, 22)  # 48 - 3 + 1 = 46, then /2 = 23
-        # Flatten: 32 * 22 * 22 = 15488
+        # After conv1: (16, 50, 50)   # 200/4 = 50
+        # After conv2: (32, 25, 25)   # 50/2 = 25  
+        # After conv3: (64, 12, 12)   # 25/2 = 12.5 -> 12
+        # After adaptive pool: (64, 2, 2)  # Force to 2x2
+        # Flatten: 64 * 2 * 2 = 256
         
         super().__init__(observation_space, features_dim)
         
-        # CNN for terrain processing
+        # CNN for terrain processing - aggressive reduction
         self.cnn = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(1, 16, kernel_size=8, stride=4, padding=2),  # 200 -> 50
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 200 -> 100
             
-            nn.Conv2d(8, 16, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),  # 50 -> 25
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 100 -> 50
             
-            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # 25 -> 12
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),  # 50 -> 25
             
+            nn.AdaptiveAvgPool2d((2, 2)),  # Force to 2x2 = 256 dims
             nn.Flatten()
         )
         
@@ -67,11 +66,11 @@ class CustomCnnExtractor(BaseFeaturesExtractor):
             cnn_output = self.cnn(sample_terrain)
             cnn_output_dim = cnn_output.shape[1]
         
-        # MLP for combined features
+        # MLP for combined features - smaller due to reduced CNN output
         self.mlp = nn.Sequential(
-            nn.Linear(cnn_output_dim + vector_dim, 512),
+            nn.Linear(cnn_output_dim + vector_dim, 256),
             nn.ReLU(),
-            nn.Linear(512, features_dim),
+            nn.Linear(256, features_dim),
             nn.ReLU()
         )
     
@@ -107,8 +106,8 @@ class CustomCnnExtractor(BaseFeaturesExtractor):
 def create_planner(env: Optional[Any] = None, 
                    algorithm: str = "PPO",
                    learning_rate: float = 3e-4,
-                   n_steps: int = 2048,
-                   batch_size: int = 64,
+                   n_steps: int = 512,
+                   batch_size: int = 512,
                    verbose: int = 1) -> Any:
     """
     Create a stable-baselines3 planner with custom CNN extractor.
