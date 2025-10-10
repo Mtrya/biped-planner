@@ -7,7 +7,7 @@ Implements continuous state/action space with terrain integration and constraint
 import gymnasium
 import numpy as np
 import math
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, Any
 from gymnasium import spaces
 import pygame
 import os
@@ -55,15 +55,24 @@ class BipedEnvironment(gymnasium.Env):
             dtype=np.float64
         )
 
-        # Observation space: 200x200 terrain height + start/goal info
-        # Terrain patch flattened + start_x, start_y, goal_x, goal_y, current_foot_side
-        obs_size = self.obs_range * self.obs_range + 5
-        self.observation_space = spaces.Box(
-            low=-np.inf,
-            high=np.inf,
-            shape=(obs_size,),
-            dtype=np.float64
-        )
+        # Normalization constants
+        self.height_min = -10.0  # Replace -inf for out-of-bounds
+        self.height_max = 130.0  # Slightly above actual max height (~120)
+        self.coord_scale = 200.0  # Observation range for coordinate normalization
+
+        # Observation space: Dict with terrain image and vector data
+        self.observation_space = spaces.Dict({
+            "terrain": spaces.Box(
+                low=0, high=255, 
+                shape=(1, self.obs_range, self.obs_range), 
+                dtype=np.uint8
+            ),
+            "vector": spaces.Box(
+                low=-np.inf, high=np.inf, 
+                shape=(5,), 
+                dtype=np.float32
+            )
+        })
 
         # State variables
         self.position = np.array([0.0, 0.0])  # (x, y)
@@ -79,7 +88,7 @@ class BipedEnvironment(gymnasium.Env):
         # Initialize
         self.reset()
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[Dict[str, np.ndarray], Dict]:
         """Reset environment to initial state."""
         super().reset(seed=seed)
 
@@ -95,7 +104,7 @@ class BipedEnvironment(gymnasium.Env):
 
         return self._get_observation(), {}
 
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: np.ndarray) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
         """Execute one step with given action."""
         dx, dy, dtheta = action
 
@@ -130,7 +139,7 @@ class BipedEnvironment(gymnasium.Env):
             # Progress reward: progress toward goal minus step penalty
             prev_distance = np.linalg.norm(self.trajectory[-2] - self.goal_pos) if len(self.trajectory) > 1 else distance_to_goal
             progress = prev_distance - distance_to_goal
-            reward = progress - 0.1  # Small step cost
+            reward = float(progress - 0.1)  # Small step cost
             terminated = False
 
         truncated = False
@@ -201,8 +210,8 @@ class BipedEnvironment(gymnasium.Env):
         
         return details
 
-    def _get_observation(self) -> np.ndarray:
-        """Generate current observation: terrain patch + start/goal info."""
+    def _get_observation(self) -> Dict[str, np.ndarray]:
+        """Generate current observation: terrain patch + start/goal info with normalization."""
         # Extract 200x200 terrain patch centered at current position
         terrain_patch = self._get_terrain_patch()
 
@@ -210,15 +219,39 @@ class BipedEnvironment(gymnasium.Env):
         start_local = self._global_to_local(self.start_pos)
         goal_local = self._global_to_local(self.goal_pos)
 
-        # Flatten terrain patch and add additional info
-        obs = np.concatenate([
-            terrain_patch.flatten(),
-            start_local,
-            goal_local,
-            [float(self.foot_side)]
-        ])
+        # Normalize all components
+        terrain_normalized, start_normalized, goal_normalized, foot_normalized = self._normalize_observation(
+            terrain_patch, start_local, goal_local, float(self.foot_side)
+        )
 
-        return obs.astype(np.float32)
+        # Create dictionary observation
+        obs = {
+            "terrain": (terrain_normalized * 255).astype(np.uint8)[np.newaxis, :, :],  # Scale to [0,255] and add channel
+            "vector": np.concatenate([
+                start_normalized, 
+                goal_normalized, 
+                [foot_normalized]
+            ]).astype(np.float32)
+        }
+
+        return obs
+
+    def _normalize_observation(self, terrain_patch: np.ndarray, start_local: np.ndarray, 
+                              goal_local: np.ndarray, foot_side: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+        """Normalize observation components to [0, 1] or [-1, 1] range."""
+        # Normalize terrain: replace -inf, then min-max normalize
+        terrain_normalized = np.where(terrain_patch == -np.inf, self.height_min, terrain_patch)
+        terrain_normalized = (terrain_normalized - self.height_min) / (self.height_max - self.height_min)
+        terrain_normalized = np.clip(terrain_normalized, 0.0, 1.0)
+
+        # Normalize coordinates by observation range
+        start_normalized = start_local / self.coord_scale
+        goal_normalized = goal_local / self.coord_scale
+
+        # Foot side: keep 0/1 (works fine with ReLU)
+        foot_normalized = foot_side
+
+        return terrain_normalized, start_normalized, goal_normalized, foot_normalized
 
     def _get_terrain_patch(self) -> np.ndarray:
         """Extract 200x200 terrain patch around current position."""
@@ -240,9 +273,9 @@ class BipedEnvironment(gymnasium.Env):
                 # Check boundaries
                 if (0 <= global_x < self.terrain_height and
                     0 <= global_y < self.terrain_width):
-                    patch[i, j] = self.terrain.get_height(global_x, global_y)
+                    patch[i, j] = self.terrain.get_height(float(global_x), float(global_y))
                 else:
-                    patch[i, j] = -np.inf  # Minus infinitive height for out-of-bounds
+                    patch[i, j] = self.height_min  # Min height for out-of-bounds
 
         return patch
 
@@ -258,7 +291,7 @@ class BipedEnvironment(gymnasium.Env):
         height_array = np.zeros((len(y_samples), len(x_samples)))
         for i, y in enumerate(y_samples):
             for j, x in enumerate(x_samples):
-                height_array[i, j] = self.terrain.get_height(x, y)
+                height_array[i, j] = self.terrain.get_height(float(x), float(y))
 
         min_height = height_array.min()
         max_height = height_array.max()
@@ -399,11 +432,13 @@ if __name__ == "__main__":
 
     print("Testing BipedEnvironment")
     print(f"Action space: {env.action_space}")
-    print(f"Observation space shape: {env.observation_space.shape}")
+    print(f"Observation space: {env.observation_space}")
 
     # Reset environment
     obs, info = env.reset()
-    print(f"Initial observation shape: {obs.shape}")
+    print(f"Initial observation keys: {obs.keys()}")
+    print(f"Terrain shape: {obs['terrain'].shape}")
+    print(f"Vector shape: {obs['vector'].shape}")
 
     # Test a few steps
     running = True

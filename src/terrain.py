@@ -81,13 +81,13 @@ class Terrain:
 
         # Define column ranges (0-indexed in Python)
         ranges = [
-            (0, 999),      # Columns 1-1000 in MATLAB
-            (999, 1059),   # Columns 1000-1060 in MATLAB
-            (1059, 1119),  # Columns 1060-1120 in MATLAB
-            (1119, 1299),  # Columns 1120-1300 in MATLAB
-            (1299, 1499),  # Columns 1300-1500 in MATLAB
-            (1499, 1999),  # Columns 1500-2000 in MATLAB
-            (1999, 3000)   # Columns 2000-3000 in MATLAB
+            (0, 999),
+            (999, 1059),
+            (1059, 1119),
+            (1119, 1299),
+            (1299, 1499),
+            (1499, 1999),
+            (1999, 3000)
         ]
 
         # Fill terrain with base heights
